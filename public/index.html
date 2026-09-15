@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PayIn PayOut — สรุปรายได้คนขับ</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --surface-2:      #f4f3f0;
+    --page:           #f6f5f2;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.09);
+    --shadow-1:       0 1px 2px rgba(11,11,11,.04), 0 8px 20px -14px rgba(11,11,11,.16);
+    --shadow-2:       0 2px 6px rgba(11,11,11,.05), 0 16px 32px -18px rgba(11,11,11,.20);
+    --series-income:  #2a78d6;
+    --series-expense: #eb6834;
+    --series-diamond: #4a3aa7;
+    --good:           #0ca30c;
+    --critical:       #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1:      #1c1c1b;
+      --surface-2:      #232322;
+      --page:           #101010;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.09);
+      --shadow-1:       0 1px 2px rgba(0,0,0,.3), 0 8px 20px -14px rgba(0,0,0,.5);
+      --shadow-2:       0 2px 6px rgba(0,0,0,.35), 0 16px 32px -18px rgba(0,0,0,.6);
+      --series-income:  #3987e5;
+      --series-expense: #d95926;
+      --series-diamond: #9085e9;
+      --good:           #0ca30c;
+      --critical:       #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(680px 320px at 12% -8%, color-mix(in srgb, var(--series-income) 10%, transparent), transparent 60%),
+      radial-gradient(600px 300px at 100% 0%, color-mix(in srgb, var(--series-diamond) 8%, transparent), transparent 55%),
+      var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 28px 16px 56px; }
+
+  .app-header { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+  .app-icon {
+    width: 42px; height: 42px; border-radius: 12px; flex: none;
+    background: linear-gradient(150deg, var(--series-income), var(--series-diamond));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 700; color: #fff;
+    box-shadow: var(--shadow-1);
+  }
+  h1 { font-size: 19px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .subtitle { color: var(--text-secondary); font-size: 13px; margin: 2px 0 0; }
+
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px;
+    padding: 8px; margin-bottom: 10px; box-shadow: var(--shadow-1);
+  }
+  .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button {
+    padding: 7px 14px; border: none; background: transparent; color: var(--text-secondary);
+    font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; border-radius: 8px;
+    transition: background .15s ease, color .15s ease;
+  }
+  .seg button.active { background: var(--series-income); color: #fff; box-shadow: var(--shadow-1); }
+  .nav { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+  .nav button, .icon-btn {
+    width: 32px; height: 32px; border-radius: 9px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-primary); cursor: pointer; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .15s ease, transform .1s ease;
+  }
+  .nav button:hover, .icon-btn:hover, .today-btn:hover { background: color-mix(in srgb, var(--series-income) 10%, var(--surface-2)); }
+  .nav button:active, .icon-btn:active, .today-btn:active { transform: scale(.94); }
+  .nav .label { font-size: 13px; color: var(--text-secondary); min-width: 140px; text-align: center; font-variant-numeric: tabular-nums; }
+  .today-btn {
+    padding: 0 12px; height: 32px; border-radius: 9px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-secondary); font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: background .15s ease, transform .1s ease;
+  }
+  .meta-row { display: flex; justify-content: flex-end; margin: 0 2px 18px; }
+  .meta-row .subtitle { font-size: 11.5px; color: var(--text-muted); margin: 0; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .kpi {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px; display: flex; align-items: flex-start; gap: 11px;
+    box-shadow: var(--shadow-1); transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+  .k-icon {
+    width: 34px; height: 34px; border-radius: 10px; flex: none; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--accent, var(--series-income)) 16%, var(--surface-1));
+  }
+  .kpi-income  .k-icon { --accent: var(--series-income); }
+  .kpi-expense .k-icon { --accent: var(--series-expense); }
+  .kpi-net     .k-icon { --accent: var(--good); }
+  .kpi-days    .k-icon { --accent: var(--text-muted); }
+  .kpi-diamond .k-icon { --accent: var(--series-diamond); }
+  .k-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+  .k-value { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.income { background: var(--series-income); }
+  .dot.expense { background: var(--series-expense); }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px;
+    padding: 18px; margin-bottom: 16px; box-shadow: var(--shadow-1);
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+  .card-title { font-size: 14px; font-weight: 700; margin: 0; }
+  .card-sub { font-size: 12px; color: var(--text-muted); margin: 1px 0 0; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); flex: none; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; font-variant-numeric: normal; border-radius: 8px 0 0 8px; }
+  td:last-child, th:last-child { border-radius: 0 8px 8px 0; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border); }
+  tbody tr { cursor: pointer; transition: background .1s ease; }
+  tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+  tbody tr:hover { background: color-mix(in srgb, var(--series-income) 8%, transparent); }
+  .net-pos { color: var(--good); }
+  .net-neg { color: var(--critical); }
+
+  .entries { font-size: 12px; color: var(--text-secondary); padding: 10px 8px 6px; }
+  .entries .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed var(--grid); }
+  .entries .row:last-child { border-bottom: none; }
+  .empty { color: var(--text-muted); font-size: 13px; text-align: center; padding: 32px 0; }
+  .empty .empty-icon { font-size: 26px; display: block; margin-bottom: 8px; opacity: .6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="app-header">
+    <div class="app-icon">฿</div>
+    <div>
+      <h1>PayIn PayOut</h1>
+      <p class="subtitle">สรุปรายได้ - รายจ่ายคนขับ Grab รายสัปดาห์ / รายเดือน</p>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="seg">
+      <button id="btn-week" class="active">รายสัปดาห์</button>
+      <button id="btn-month">รายเดือน</button>
+    </div>
+    <div class="nav">
+      <button id="prev" title="ก่อนหน้า">‹</button>
+      <span class="label" id="range-label">—</span>
+      <button id="next" title="ถัดไป">›</button>
+    </div>
+    <button class="today-btn" id="today">วันนี้</button>
+    <button class="icon-btn" id="refresh" title="รีเฟรช">↻</button>
+  </div>
+  <div class="meta-row"><p class="subtitle" id="updated-at"></p></div>
+
+  <div class="kpis">
+    <div class="kpi kpi-income">
+      <div class="k-icon">💰</div>
+      <div>
+        <div class="k-label">รายได้รวม</div>
+        <div class="k-value" id="kpi-income">0</div>
+      </div>
+    </div>
+    <div class="kpi kpi-expense">
+      <div class="k-icon">💸</div>
+      <div>
+        <div class="k-label">รายจ่ายรวม</div>
+        <div class="k-value" id="kpi-expense">0</div>
+      </div>
+    </div>
+    <div class="kpi kpi-net">
+      <div class="k-icon">📊</div>
+      <div>
+        <div class="k-label">คงเหลือสุทธิ</div>
+        <div class="k-value" id="kpi-net">0</div>
+      </div>
+    </div>
+    <div class="kpi kpi-days">
+      <div class="k-icon">📅</div>
+      <div>
+        <div class="k-label">วันที่บันทึก</div>
+        <div class="k-value" id="kpi-days">0</div>
+      </div>
+    </div>
+    <div class="kpi kpi-diamond">
+      <div class="k-icon">💎</div>
+      <div>
+        <div class="k-label">เพชรรวม</div>
+        <div class="k-value" id="kpi-diamonds">0</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="card-title">แนวโน้มรายได้ - รายจ่าย</p>
+        <p class="card-sub">รายวันในช่วงที่เลือก</p>
+      </div>
+      <div class="legend">
+        <span><span class="dot income"></span>รายได้</span>
+        <span><span class="dot expense"></span>รายจ่าย</span>
+      </div>
+    </div>
+    <canvas id="chart" height="220"></canvas>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <p class="card-title">รายละเอียดรายวัน</p>
+        <p class="card-sub">คลิกแถวเพื่อดูรายการย่อย (เฉพาะวันที่ยังไม่ปิดบันทึก)</p>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>วันที่</th><th>รายได้</th><th>รายจ่าย</th><th>คงเหลือ</th><th>เพชร</th><th>ระดับ</th></tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const fmt = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const todayStr = () => {
+    const d = new Date(Date.now() + 7 * 3600 * 1000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  };
+  const addDays = (s, n) => {
+    const [y, m, d] = s.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d, 12));
+    dt.setUTCDate(dt.getUTCDate() + n);
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+  };
+  const shortLabel = (s) => {
+    const [, m, d] = s.split('-');
+    return `${d}/${m}`;
+  };
+
+  let mode = 'week'; // 'week' | 'month'
+  let anchor = todayStr();
+  let chart;
+
+  const css = getComputedStyle(document.documentElement);
+  const colorOf = (name) => css.getPropertyValue(name).trim();
+
+  async function load() {
+    const url = mode === 'week' ? `/api/week?date=${anchor}` : `/api/month?date=${anchor}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    render(data);
+    document.getElementById('updated-at').textContent =
+      'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function render(data) {
+    document.getElementById('range-label').textContent =
+      data.from === data.to ? data.from : `${data.from} — ${data.to}`;
+    document.getElementById('kpi-income').textContent = fmt(data.totals.income);
+    document.getElementById('kpi-expense').textContent = fmt(data.totals.expense);
+    const netEl = document.getElementById('kpi-net');
+    netEl.textContent = fmt(data.totals.net);
+    netEl.className = 'k-value ' + (data.totals.net >= 0 ? 'net-pos' : 'net-neg');
+    document.getElementById('kpi-days').textContent = data.days.filter((d) => d.income || d.expense).length;
+    document.getElementById('kpi-diamonds').textContent = fmt(data.totals.diamonds || 0);
+
+    const tbody = document.getElementById('table-body');
+    tbody.innerHTML = '';
+    if (data.days.every((d) => !d.income && !d.expense)) {
+      tbody.innerHTML =
+        '<tr><td colspan="6" class="empty"><span class="empty-icon">🧾</span>ยังไม่มีข้อมูลในช่วงนี้</td></tr>';
+    }
+    for (const d of data.days) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${d.date}</td><td>${fmt(d.income)}</td><td>${fmt(d.expense)}</td>
+        <td class="${d.net >= 0 ? 'net-pos' : 'net-neg'}">${fmt(d.net)}</td>
+        <td>${d.diamonds ? fmt(d.diamonds) : '-'}</td>
+        <td>${d.diamondLevel ? 'ระดับ ' + d.diamondLevel : '-'}</td>`;
+      tr.addEventListener('click', () => toggleEntries(tr, d.date));
+      tbody.appendChild(tr);
+    }
+
+    const labels = data.days.map((d) => shortLabel(d.date));
+    const incomeData = data.days.map((d) => d.income);
+    const expenseData = data.days.map((d) => d.expense);
+
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById('chart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'รายได้', data: incomeData, backgroundColor: colorOf('--series-income'), borderRadius: 4, maxBarThickness: 22 },
+          { label: 'รายจ่าย', data: expenseData, backgroundColor: colorOf('--series-expense'), borderRadius: 4, maxBarThickness: 22 },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: colorOf('--surface-1'),
+            titleColor: colorOf('--text-primary'),
+            bodyColor: colorOf('--text-secondary'),
+            borderColor: colorOf('--border'),
+            borderWidth: 1,
+            padding: 10,
+            callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)} บาท` },
+          },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: colorOf('--text-muted'), font: { size: 11 } } },
+          y: {
+            grid: { color: colorOf('--grid') },
+            ticks: { color: colorOf('--text-muted'), font: { size: 11 } },
+            border: { color: colorOf('--baseline') },
+          },
+        },
+      },
+    });
+  }
+
+  async function toggleEntries(tr, date) {
+    const existing = tr.nextElementSibling;
+    if (existing && existing.classList.contains('entries-row')) {
+      existing.remove();
+      return;
+    }
+    document.querySelectorAll('.entries-row').forEach((r) => r.remove());
+    const res = await fetch(`/api/entries?date=${date}`);
+    const entries = await res.json();
+    const row = document.createElement('tr');
+    row.className = 'entries-row';
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    if (!entries.length) {
+      cell.innerHTML =
+        '<div class="entries">ไม่มีรายละเอียดรายการ — วันที่ปิดบันทึกแล้วจะเก็บเฉพาะยอดรวม ไม่เก็บรายการย่อยรายออเดอร์</div>';
+    } else {
+      cell.innerHTML =
+        '<div class="entries">' +
+        entries
+          .map((e) => {
+            const time = e.createdAt.slice(11, 16);
+            const label = e.type === 'income' ? '💰 รายได้' : '💸 รายจ่าย';
+            const diamondNote = e.diamond ? ` (💎 +${e.diamond})` : '';
+            return `<div class="row"><span>${time} · ${label}</span><span>${fmt(e.amount)} บาท${diamondNote}</span></div>`;
+          })
+          .join('') +
+        '</div>';
+    }
+    row.appendChild(cell);
+    tr.after(row);
+  }
+
+  document.getElementById('btn-week').addEventListener('click', () => {
+    mode = 'week';
+    document.getElementById('btn-week').classList.add('active');
+    document.getElementById('btn-month').classList.remove('active');
+    load();
+  });
+  document.getElementById('btn-month').addEventListener('click', () => {
+    mode = 'month';
+    document.getElementById('btn-month').classList.add('active');
+    document.getElementById('btn-week').classList.remove('active');
+    load();
+  });
+  document.getElementById('prev').addEventListener('click', () => {
+    anchor = addDays(anchor, mode === 'week' ? -7 : -30);
+    load();
+  });
+  document.getElementById('next').addEventListener('click', () => {
+    anchor = addDays(anchor, mode === 'week' ? 7 : 30);
+    load();
+  });
+  document.getElementById('today').addEventListener('click', () => {
+    anchor = todayStr();
+    load();
+  });
+  document.getElementById('refresh').addEventListener('click', load);
+
+  load();
+  // Auto-refresh so an already-open tab picks up new entries without a manual reload.
+  setInterval(load, 20000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') load();
+  });
+</script>
+</body>
+</html>
