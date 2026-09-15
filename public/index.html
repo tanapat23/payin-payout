@@ -91,7 +91,7 @@
   }
   .nav button:hover, .icon-btn:hover, .today-btn:hover { background: color-mix(in srgb, var(--series-income) 10%, var(--surface-2)); }
   .nav button:active, .icon-btn:active, .today-btn:active { transform: scale(.94); }
-  .nav .label { font-size: 13px; color: var(--text-secondary); min-width: 140px; text-align: center; font-variant-numeric: tabular-nums; }
+  .nav .label { font-size: 13px; color: var(--text-secondary); min-width: 92px; text-align: center; font-variant-numeric: tabular-nums; }
   .today-btn {
     padding: 0 12px; height: 32px; border-radius: 9px; border: 1px solid var(--border);
     background: var(--surface-2); color: var(--text-secondary); font-size: 12px; font-weight: 500; cursor: pointer;
@@ -157,7 +157,7 @@
     <div class="app-icon">฿</div>
     <div>
       <h1>PayIn PayOut</h1>
-      <p class="subtitle">สรุปรายได้ - รายจ่ายคนขับ Grab รายสัปดาห์ / รายเดือน</p>
+      <p class="subtitle">สรุปรายได้ - รายจ่าย ของ อ๋องแอ๋ง</p>
     </div>
   </div>
 
@@ -279,7 +279,7 @@
 
   function render(data) {
     document.getElementById('range-label').textContent =
-      data.from === data.to ? data.from : `${data.from} — ${data.to}`;
+      data.from === data.to ? shortLabel(data.from) : `${shortLabel(data.from)} — ${shortLabel(data.to)}`;
     document.getElementById('kpi-income').textContent = fmt(data.totals.income);
     document.getElementById('kpi-expense').textContent = fmt(data.totals.expense);
     const netEl = document.getElementById('kpi-net');
@@ -296,7 +296,7 @@
     }
     for (const d of data.days) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${d.date}</td><td>${fmt(d.income)}</td><td>${fmt(d.expense)}</td>
+      tr.innerHTML = `<td>${shortLabel(d.date)}</td><td>${fmt(d.income)}</td><td>${fmt(d.expense)}</td>
         <td class="${d.net >= 0 ? 'net-pos' : 'net-neg'}">${fmt(d.net)}</td>
         <td>${d.diamonds ? fmt(d.diamonds) : '-'}</td>
         <td>${d.diamondLevel ? 'ระดับ ' + d.diamondLevel : '-'}</td>`;
