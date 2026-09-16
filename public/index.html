@@ -123,6 +123,17 @@
   .dot.income { background: var(--series-income); }
   .dot.expense { background: var(--series-expense); }
 
+  .insight { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .insight-item {
+    flex: 1; min-width: 200px; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow-1);
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .insight-item.good { border-left: 3px solid var(--good); }
+  .insight-item.bad { border-left: 3px solid var(--critical); }
+  .insight-tag { font-size: 12px; color: var(--text-secondary); }
+  .insight-value { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
   .card {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px;
     padding: 18px; margin-bottom: 16px; box-shadow: var(--shadow-1);
@@ -214,6 +225,17 @@
     </div>
   </div>
 
+  <div class="insight" id="insight" style="display:none;">
+    <div class="insight-item good">
+      <span class="insight-tag">🏆 วันที่ดีที่สุด</span>
+      <span class="insight-value" id="best-day">—</span>
+    </div>
+    <div class="insight-item bad" id="worst-wrap">
+      <span class="insight-tag">📉 วันที่แย่ที่สุด</span>
+      <span class="insight-value" id="worst-day">—</span>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-head">
       <div>
@@ -285,8 +307,26 @@
     const netEl = document.getElementById('kpi-net');
     netEl.textContent = fmt(data.totals.net);
     netEl.className = 'k-value ' + (data.totals.net >= 0 ? 'net-pos' : 'net-neg');
-    document.getElementById('kpi-days').textContent = data.days.filter((d) => d.income || d.expense).length;
+    const workedDays = data.days.filter((d) => d.income || d.expense);
+    document.getElementById('kpi-days').textContent = workedDays.length;
     document.getElementById('kpi-diamonds').textContent = fmt(data.totals.diamonds || 0);
+
+    const insight = document.getElementById('insight');
+    if (workedDays.length) {
+      insight.style.display = '';
+      const best = workedDays.reduce((a, b) => (b.net > a.net ? b : a));
+      const worst = workedDays.reduce((a, b) => (b.net < a.net ? b : a));
+      document.getElementById('best-day').textContent = `${shortLabel(best.date)} · ${fmt(best.net)} บาท`;
+      const worstWrap = document.getElementById('worst-wrap');
+      if (workedDays.length > 1) {
+        worstWrap.style.display = '';
+        document.getElementById('worst-day').textContent = `${shortLabel(worst.date)} · ${fmt(worst.net)} บาท`;
+      } else {
+        worstWrap.style.display = 'none';
+      }
+    } else {
+      insight.style.display = 'none';
+    }
 
     const tbody = document.getElementById('table-body');
     tbody.innerHTML = '';

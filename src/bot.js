@@ -7,15 +7,37 @@ const AMOUNT_RE = /^\d+(\.\d{1,2})?$/;
 // Income can optionally carry a diamond count, space-separated: "21 35" = 21 baht, +35 diamonds.
 const INCOME_RE = /^(\d+(?:\.\d{1,2})?)(?:\s+(\d+))?$/;
 
+const EXPENSE_CATEGORIES = [
+  { key: 'fuel', label: '⛽ น้ำมัน' },
+  { key: 'food', label: '🍔 อาหาร' },
+  { key: 'repair', label: '🔧 ซ่อมบำรุง' },
+  { key: 'other', label: '📦 อื่นๆ' },
+];
+const categoryLabel = (key) => EXPENSE_CATEGORIES.find((c) => c.key === key)?.label || '📦 อื่นๆ';
+
 function baht(n) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+function formatHours(hours) {
+  const totalMinutes = Math.round(hours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h} ชม. ${m} นาที`;
+}
+
 const notStartedKeyboard = Markup.keyboard([['🚗 เริ่มบันทึก']]).resize();
-const recordingKeyboard = Markup.keyboard([['💰 รายได้', '💸 รายจ่าย'], ['🏁 จบการบันทึก']]).resize();
+const recordingKeyboard = Markup.keyboard([
+  ['💰 รายได้', '💸 รายจ่าย'],
+  ['↩️ ลบรายการล่าสุด'],
+  ['🏁 จบการบันทึก'],
+]).resize();
 const confirmStopKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('✅ ยืนยันจบการบันทึก', 'confirm_stop'), Markup.button.callback('❌ ยกเลิก', 'cancel_stop')],
 ]);
+const categoryKeyboard = Markup.inlineKeyboard(
+  EXPENSE_CATEGORIES.map((c) => [Markup.button.callback(c.label, `expense_cat_${c.key}`)])
+);
 
 function summaryText(summary) {
   const lines = [
@@ -25,6 +47,17 @@ function summaryText(summary) {
     `📊 คงเหลือ: ${baht(summary.net)} บาท`,
     `🧾 จำนวนรายการ: ${summary.count}`,
   ];
+  const categories = Object.entries(summary.expenseByCategory || {}).filter(([, amt]) => amt > 0);
+  if (categories.length) {
+    lines.push('— รายจ่ายแยกหมวด —');
+    for (const [key, amt] of categories) {
+      lines.push(`${categoryLabel(key)}: ${baht(amt)} บาท`);
+    }
+  }
+  if (summary.hoursWorked > 0) {
+    lines.push(`⏱ เวลาทำงาน: ${formatHours(summary.hoursWorked)}`);
+    lines.push(`⚡ รายได้เฉลี่ย: ${baht(summary.incomePerHour)} บาท/ชม.`);
+  }
   if (summary.diamonds > 0) {
     lines.push(`💎 เพชรสะสม: ${summary.diamonds} (ระดับสูงสุดที่ทำได้: ${summary.diamondLevel || 0})`);
   }
@@ -90,8 +123,22 @@ export function createBot(token, allowedChatId) {
       await ctx.reply('ยังไม่ได้เริ่มบันทึกวันนี้ กดปุ่ม "เริ่มบันทึก" ก่อน', notStartedKeyboard);
       return;
     }
+    await ctx.reply('รายจ่ายนี้เป็นหมวดไหน?', categoryKeyboard);
+  });
+
+  bot.action(/^expense_cat_(fuel|food|repair|other)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const date = todayStr();
+    const day = db.getDay(date);
+    await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+    if (day?.status !== 'open') {
+      await ctx.reply('ยังไม่ได้เริ่มบันทึกวันนี้ กดปุ่ม "เริ่มบันทึก" ก่อน', notStartedKeyboard);
+      return;
+    }
+    const category = ctx.match[1];
     await db.setPendingType(date, 'expense');
-    await ctx.reply('พิมพ์จำนวนรายจ่าย (ตัวเลขเท่านั้น เช่น 50)');
+    await db.setPendingCategory(date, category);
+    await ctx.reply(`พิมพ์จำนวนเงินค่า${categoryLabel(category).replace(/^\S+\s/, '')} (ตัวเลขเท่านั้น เช่น 50)`);
   });
 
   bot.hears('🏁 จบการบันทึก', async (ctx) => {
@@ -117,6 +164,28 @@ export function createBot(token, allowedChatId) {
     await ctx.answerCbQuery();
     await ctx.editMessageReplyMarkup(undefined).catch(() => {});
     await ctx.reply('ยกเลิกแล้ว บันทึกต่อได้เลย', recordingKeyboard);
+  });
+
+  bot.hears('↩️ ลบรายการล่าสุด', async (ctx) => {
+    const date = todayStr();
+    const day = db.getDay(date);
+    if (day?.status !== 'open') {
+      await ctx.reply('ยังไม่ได้เริ่มบันทึกวันนี้', notStartedKeyboard);
+      return;
+    }
+    const removed = await db.undoLastEntry(date);
+    if (!removed) {
+      await ctx.reply('ยังไม่มีรายการให้ลบวันนี้', recordingKeyboard);
+      return;
+    }
+    const summary = db.getDaySummary(date);
+    const label = removed.type === 'income' ? '💰 รายได้' : `💸 รายจ่าย${removed.category ? ` (${categoryLabel(removed.category)})` : ''}`;
+    const diamondNote = removed.diamond > 0 ? ` (เพชร -${removed.diamond})` : '';
+    await ctx.reply(
+      `ลบรายการล่าสุดแล้ว: ${label} ${baht(removed.amount)} บาท${diamondNote} 🗑️\n\n` +
+        `รวมวันนี้ — รายได้: ${baht(summary.income)} | รายจ่าย: ${baht(summary.expense)} | คงเหลือ: ${baht(summary.net)}`,
+      recordingKeyboard
+    );
   });
 
   bot.on('text', async (ctx) => {
@@ -156,9 +225,10 @@ export function createBot(token, allowedChatId) {
       return;
     }
 
-    await db.addEntry(date, type, amount, diamond);
+    const category = type === 'expense' ? day.pendingCategory : null;
+    await db.addEntry(date, type, amount, diamond, category);
     const summary = db.getDaySummary(date);
-    const label = type === 'income' ? '💰 รายได้' : '💸 รายจ่าย';
+    const label = type === 'income' ? '💰 รายได้' : `💸 รายจ่าย${category ? ` (${categoryLabel(category)})` : ''}`;
     const diamondNote = diamond > 0 ? ` (เพชร +${diamond})` : '';
     const lines = [
       `บันทึก ${label} ${baht(amount)} บาท${diamondNote} เวลา ${timeStr()} ✅`,
