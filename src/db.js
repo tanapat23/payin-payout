@@ -8,7 +8,8 @@ import { levelFor, thresholdsFor } from './diamonds.js';
 const DATA_DIR = path.resolve('data');
 const DATA_FILE = path.join(DATA_DIR, 'db.json');
 
-const defaultData = { days: {}, entries: [] };
+const defaultVehicle = { currentOdometer: null, lastOilChangeOdometer: null, lastOilChangeDate: null };
+const defaultData = { days: {}, entries: [], vehicle: { ...defaultVehicle } };
 
 await mkdir(DATA_DIR, { recursive: true });
 const db = new Low(new JSONFile(DATA_FILE), defaultData);
@@ -16,6 +17,7 @@ await db.read();
 db.data ||= defaultData;
 db.data.days ||= {};
 db.data.entries ||= [];
+db.data.vehicle ||= { ...defaultVehicle };
 
 // Migration: backfill aggregate fields on any day missing them, then purge entries
 // belonging to already-closed days — closed days keep only their daily totals.
@@ -38,6 +40,16 @@ for (const day of Object.values(db.data.days)) {
     day.pendingCategory = null;
     migrated = true;
   }
+  if (day.distanceKm === undefined) {
+    day.startOdometer = day.startOdometer ?? null;
+    day.endOdometer = day.endOdometer ?? null;
+    day.distanceKm = 0;
+    migrated = true;
+  }
+  if (day.completedHours === undefined) {
+    day.completedHours = 0;
+    migrated = true;
+  }
 }
 const beforeCount = db.data.entries.length;
 db.data.entries = db.data.entries.filter((e) => db.data.days[e.date]?.status !== 'closed');
@@ -53,6 +65,10 @@ function getOrCreateDay(dateStr) {
       pendingCategory: null, // expense category chosen before the amount is typed
       startedAt: null,
       endedAt: null,
+      startOdometer: null,
+      endOdometer: null,
+      distanceKm: 0, // cumulative across every start/end session today
+      completedHours: 0, // cumulative across every finished session today
       income: 0,
       expense: 0,
       diamonds: 0,
@@ -68,12 +84,33 @@ export function getDay(dateStr) {
   return db.data.days[dateStr] || null;
 }
 
-export async function startDay(dateStr) {
+export function getVehicle() {
+  return db.data.vehicle;
+}
+
+// Logs an oil change at the given odometer reading — resets the interval used for
+// the 4,000 km oil-change warning, and doubles as a fresh "current odometer" reading.
+export async function recordOilChange(dateStr, odometer) {
+  db.data.vehicle.lastOilChangeOdometer = odometer;
+  db.data.vehicle.lastOilChangeDate = dateStr;
+  if (db.data.vehicle.currentOdometer == null || odometer > db.data.vehicle.currentOdometer) {
+    db.data.vehicle.currentOdometer = odometer;
+  }
+  await db.write();
+  return db.data.vehicle;
+}
+
+// odometer: starting mileage (km) for this session — a day can have several start/end
+// sessions (e.g. a lunch break); completedHours/distanceKm accumulate across all of them.
+export async function startDay(dateStr, odometer = null) {
   const day = getOrCreateDay(dateStr);
-  if (day.status !== 'open') {
-    day.status = 'open';
-    day.startedAt = nowIso();
-    day.endedAt = null;
+  day.status = 'open';
+  day.startedAt = nowIso();
+  day.endedAt = null;
+  day.pendingType = null;
+  if (odometer != null) {
+    day.startOdometer = odometer;
+    db.data.vehicle.currentOdometer = odometer;
   }
   await db.write();
   return day;
@@ -168,12 +205,26 @@ export async function undoLastEntry(dateStr) {
 
 // Closing a day purges its individual entries — only the day's aggregate totals are kept,
 // per the driver's request to not accumulate per-order detail indefinitely.
-export async function endDay(dateStr) {
+// odometer: ending mileage (km) for this session — its duration/distance folds into the
+// day's running completedHours/distanceKm so multiple sessions in one day add up correctly.
+export async function endDay(dateStr, odometer = null) {
   const day = getOrCreateDay(dateStr);
+  if (day.startedAt) {
+    const sessionHours = (new Date() - new Date(day.startedAt)) / 3600000;
+    if (sessionHours > 0) day.completedHours = (day.completedHours || 0) + sessionHours;
+  }
   day.status = 'closed';
   day.pendingType = null;
   day.pendingCategory = null;
   day.endedAt = nowIso();
+  if (odometer != null) {
+    if (day.startOdometer != null) {
+      const sessionDistance = odometer - day.startOdometer;
+      if (sessionDistance > 0) day.distanceKm = (day.distanceKm || 0) + sessionDistance;
+    }
+    day.endOdometer = odometer;
+    db.data.vehicle.currentOdometer = odometer;
+  }
   db.data.entries = db.data.entries.filter((e) => e.date !== dateStr);
   await db.write();
   return day;
@@ -183,11 +234,15 @@ export function getEntries(dateStr) {
   return db.data.entries.filter((e) => e.date === dateStr);
 }
 
+// Completed sessions' hours (persisted at each endDay call) plus, if a session is
+// currently in progress, its live elapsed time — so this is always the true day total.
 function hoursWorked(day) {
-  if (!day.startedAt) return 0;
-  const end = day.endedAt ? new Date(day.endedAt) : new Date();
-  const ms = end - new Date(day.startedAt);
-  return ms > 0 ? ms / 3600000 : 0;
+  const completed = day.completedHours || 0;
+  if (day.status === 'open' && day.startedAt) {
+    const live = (new Date() - new Date(day.startedAt)) / 3600000;
+    return completed + Math.max(0, live);
+  }
+  return completed;
 }
 
 export function getDaySummary(dateStr) {
@@ -204,9 +259,14 @@ export function getDaySummary(dateStr) {
       expenseByCategory: {},
       hoursWorked: 0,
       incomePerHour: 0,
+      distanceKm: 0,
+      incomePerKm: 0,
+      fuelPerKm: 0,
     };
   }
   const hours = hoursWorked(day);
+  const distanceKm = day.distanceKm || 0;
+  const fuelExpense = day.expenseByCategory?.fuel || 0;
   return {
     date: dateStr,
     income: day.income,
@@ -218,13 +278,16 @@ export function getDaySummary(dateStr) {
     expenseByCategory: day.expenseByCategory,
     hoursWorked: hours,
     incomePerHour: hours > 0 ? day.income / hours : 0,
+    distanceKm,
+    incomePerKm: distanceKm > 0 ? day.income / distanceKm : 0,
+    fuelPerKm: distanceKm > 0 ? fuelExpense / distanceKm : 0,
   };
 }
 
 // Inclusive range summary, one row per day (with data) plus totals.
 export function getRangeSummary(fromStr, toStr) {
   const days = Object.values(db.data.days)
-    .filter((d) => d.date >= fromStr && d.date <= toStr && (d.income || d.expense))
+    .filter((d) => d.date >= fromStr && d.date <= toStr && (d.income || d.expense || d.distanceKm))
     .map((d) => ({
       date: d.date,
       income: d.income,
@@ -232,6 +295,7 @@ export function getRangeSummary(fromStr, toStr) {
       net: d.income - d.expense,
       diamonds: d.diamonds,
       diamondLevel: d.diamondLevel,
+      distanceKm: d.distanceKm || 0,
     }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
   const totals = days.reduce(
@@ -240,8 +304,9 @@ export function getRangeSummary(fromStr, toStr) {
       expense: acc.expense + d.expense,
       net: acc.net + d.net,
       diamonds: acc.diamonds + d.diamonds,
+      distanceKm: acc.distanceKm + d.distanceKm,
     }),
-    { income: 0, expense: 0, net: 0, diamonds: 0 }
+    { income: 0, expense: 0, net: 0, diamonds: 0, distanceKm: 0 }
   );
   return { from: fromStr, to: toStr, days, totals };
 }

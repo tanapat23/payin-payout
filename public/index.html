@@ -22,6 +22,7 @@
     --series-income:  #2a78d6;
     --series-expense: #eb6834;
     --series-diamond: #4a3aa7;
+    --series-distance: #1baf7a;
     --good:           #0ca30c;
     --critical:       #d03b3b;
   }
@@ -42,6 +43,7 @@
       --series-income:  #3987e5;
       --series-expense: #d95926;
       --series-diamond: #9085e9;
+      --series-distance: #199e70;
       --good:           #0ca30c;
       --critical:       #e66767;
     }
@@ -117,11 +119,20 @@
   .kpi-net     .k-icon { --accent: var(--good); }
   .kpi-days    .k-icon { --accent: var(--text-muted); }
   .kpi-diamond .k-icon { --accent: var(--series-diamond); }
+  .kpi-distance .k-icon { --accent: var(--series-distance); }
   .k-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
   .k-value { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .dot.income { background: var(--series-income); }
   .dot.expense { background: var(--series-expense); }
+
+  .today-strip { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .today-chip {
+    flex: 1; min-width: 150px; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 12px; box-shadow: var(--shadow-1);
+    font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 3px;
+  }
+  .today-chip strong { font-size: 16px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
   .insight { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
   .insight-item {
@@ -187,6 +198,21 @@
   </div>
   <div class="meta-row"><p class="subtitle" id="updated-at"></p></div>
 
+  <div class="today-strip" id="today-strip" style="display:none;">
+    <div class="today-chip">
+      <span>🛣 วันนี้วิ่งไป</span>
+      <strong id="today-km">0 กม.</strong>
+    </div>
+    <div class="today-chip">
+      <span>💵 เงินต่อกิโล</span>
+      <strong id="today-income-per-km">0 บาท/กม.</strong>
+    </div>
+    <div class="today-chip">
+      <span>⛽ ค่าน้ำมันต่อกิโล</span>
+      <strong id="today-fuel-per-km">0 บาท/กม.</strong>
+    </div>
+  </div>
+
   <div class="kpis">
     <div class="kpi kpi-income">
       <div class="k-icon">💰</div>
@@ -221,6 +247,13 @@
       <div>
         <div class="k-label">เพชรรวม</div>
         <div class="k-value" id="kpi-diamonds">0</div>
+      </div>
+    </div>
+    <div class="kpi kpi-distance">
+      <div class="k-icon">🛣</div>
+      <div>
+        <div class="k-label">ระยะทางรวม</div>
+        <div class="k-value" id="kpi-distance">0</div>
       </div>
     </div>
   </div>
@@ -259,7 +292,7 @@
     </div>
     <table>
       <thead>
-        <tr><th>วันที่</th><th>รายได้</th><th>รายจ่าย</th><th>คงเหลือ</th><th>เพชร</th><th>ระดับ</th></tr>
+        <tr><th>วันที่</th><th>รายได้</th><th>รายจ่าย</th><th>คงเหลือ</th><th>กม.</th><th>เพชร</th><th>ระดับ</th></tr>
       </thead>
       <tbody id="table-body"></tbody>
     </table>
@@ -292,11 +325,25 @@
 
   async function load() {
     const url = mode === 'week' ? `/api/week?date=${anchor}` : `/api/month?date=${anchor}`;
-    const res = await fetch(url);
+    const [res, todayRes] = await Promise.all([fetch(url), fetch('/api/today')]);
     const data = await res.json();
+    const today = await todayRes.json();
     render(data);
+    renderTodayStrip(today);
     document.getElementById('updated-at').textContent =
       'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function renderTodayStrip(today) {
+    const strip = document.getElementById('today-strip');
+    if (!today.distanceKm) {
+      strip.style.display = 'none';
+      return;
+    }
+    strip.style.display = '';
+    document.getElementById('today-km').textContent = `${fmt(today.distanceKm)} กม.`;
+    document.getElementById('today-income-per-km').textContent = `${fmt(today.incomePerKm)} บาท/กม.`;
+    document.getElementById('today-fuel-per-km').textContent = `${fmt(today.fuelPerKm)} บาท/กม.`;
   }
 
   function render(data) {
@@ -310,6 +357,7 @@
     const workedDays = data.days.filter((d) => d.income || d.expense);
     document.getElementById('kpi-days').textContent = workedDays.length;
     document.getElementById('kpi-diamonds').textContent = fmt(data.totals.diamonds || 0);
+    document.getElementById('kpi-distance').textContent = `${fmt(data.totals.distanceKm || 0)} กม.`;
 
     const insight = document.getElementById('insight');
     if (workedDays.length) {
@@ -332,12 +380,13 @@
     tbody.innerHTML = '';
     if (data.days.every((d) => !d.income && !d.expense)) {
       tbody.innerHTML =
-        '<tr><td colspan="6" class="empty"><span class="empty-icon">🧾</span>ยังไม่มีข้อมูลในช่วงนี้</td></tr>';
+        '<tr><td colspan="7" class="empty"><span class="empty-icon">🧾</span>ยังไม่มีข้อมูลในช่วงนี้</td></tr>';
     }
     for (const d of data.days) {
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${shortLabel(d.date)}</td><td>${fmt(d.income)}</td><td>${fmt(d.expense)}</td>
         <td class="${d.net >= 0 ? 'net-pos' : 'net-neg'}">${fmt(d.net)}</td>
+        <td>${d.distanceKm ? fmt(d.distanceKm) : '-'}</td>
         <td>${d.diamonds ? fmt(d.diamonds) : '-'}</td>
         <td>${d.diamondLevel ? 'ระดับ ' + d.diamondLevel : '-'}</td>`;
       tr.addEventListener('click', () => toggleEntries(tr, d.date));
@@ -396,7 +445,7 @@
     const row = document.createElement('tr');
     row.className = 'entries-row';
     const cell = document.createElement('td');
-    cell.colSpan = 6;
+    cell.colSpan = 7;
     if (!entries.length) {
       cell.innerHTML =
         '<div class="entries">ไม่มีรายละเอียดรายการ — วันที่ปิดบันทึกแล้วจะเก็บเฉพาะยอดรวม ไม่เก็บรายการย่อยรายออเดอร์</div>';

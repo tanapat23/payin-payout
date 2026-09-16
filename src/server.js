@@ -33,7 +33,9 @@ function fillRange(fromStr, toStr) {
   const days = [];
   let cursor = fromStr;
   while (cursor <= toStr) {
-    days.push(byDate.get(cursor) || { date: cursor, income: 0, expense: 0, net: 0, diamonds: 0, diamondLevel: 0 });
+    days.push(
+      byDate.get(cursor) || { date: cursor, income: 0, expense: 0, net: 0, diamonds: 0, diamondLevel: 0, distanceKm: 0 }
+    );
     cursor = addDays(cursor, 1);
   }
   return { from: fromStr, to: toStr, days, totals: summary.totals };
